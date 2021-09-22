@@ -1,0 +1,153 @@
+import pybullet as p
+import pybullet_data
+
+import torch
+import torchvision
+
+import time
+import math
+import cv2
+import numpy as np
+import matplotlib.pyplot as plt
+from itertools import chain
+
+class CarEnvironment:
+    def __init__(self, args, device):
+        self.client = p.connect(p.DIRECT)
+        self.car = None
+        self.done = False
+        self.args = args
+        self.device = device
+        self.targetVel = args.targetVel
+        self.maxForce = args.maxForce
+        self.screen_height = args.screen_height
+        self.screen_width = args.screen_width
+    
+    def reset(self):
+        p.resetSimulation()     
+        p.setAdditionalSearchPath(pybullet_data.getDataPath())
+        p.loadURDF("simpleplane.urdf")
+        p.setGravity(0, 0, -10)
+        p.setRealTimeSimulation(0) 
+        self.car = p.loadURDF("husky/husky.urdf", self.args.start_x, self.args.start_y, self.args.start_z)
+        visualShapeId3 = p.loadURDF("sphere2red.urdf", [self.args.final_x, self.args.final_y, self.args.final_z], useFixedBase=1)
+        self.carPos, self.carOrn = p.getBasePositionAndOrientation(self.car)
+        self.done = False
+
+    def render(self):
+        proj_matrix = p.computeProjectionMatrixFOV(fov=80, aspect=1, nearVal=0.7, farVal=1000)
+        pos, ori = [list(l) for l in p.getBasePositionAndOrientation(self.car)] 
+        pos[2] = 0.5
+
+        # Rotate camera direction
+        rot_mat = np.array(p.getMatrixFromQuaternion(ori)).reshape(3, 3)
+        camera_vec = np.matmul(rot_mat, [1, 0, 0])
+        up_vec = np.matmul(rot_mat, np.array([0, 0, 1]))
+        view_matrix = p.computeViewMatrix(pos, pos + camera_vec, up_vec)
+
+        # Display image
+        width, height, rgbImg, depthImg, segImg = p.getCameraImage(self.screen_width, self.screen_height, view_matrix, proj_matrix)
+        frame = rgbImg
+        frame = np.reshape(frame, (self.screen_width, self.screen_height, 4))
+
+    def ImageAtCurrentPosition(self):
+        proj_matrix = p.computeProjectionMatrixFOV(fov=100, aspect=1, nearVal=0.7, farVal=1000)
+        pos, ori = [list(l) for l in p.getBasePositionAndOrientation(self.car)] 
+        pos[2] = 0.5
+
+        # Rotate camera direction
+        rot_mat = np.array(p.getMatrixFromQuaternion(ori)).reshape(3, 3)
+        camera_vec = np.matmul(rot_mat, [1, 0, 0])
+        up_vec = np.matmul(rot_mat, np.array([0, 0, 1]))
+        view_matrix = p.computeViewMatrix(pos, pos + camera_vec, up_vec)
+        width, height, rgbImg, depthImg, segImg = p.getCameraImage(self.screen_width, self.screen_height, view_matrix, proj_matrix)
+
+        rgbImg = rgbImg[:,:,:3] #convert rgba to rgb
+        rgbImgTensor = torchvision.transforms.ToTensor()(rgbImg) #convert HWC to CHW
+        rgbImgTensor = rgbImgTensor.unsqueeze(0).to(self.device) #add batch dimension
+        return rgbImgTensor, rgbImg
+
+    def collided(self):
+        # Done by running off boundaries
+        self.carPos, self.carOrn = p.getBasePositionAndOrientation(self.car)
+        if (self.carPos[0] >= 10 or self.carPos[0] <= -10 or
+                self.carPos[1] >= 10 or self.carPos[1] <= -10 or self.carPos[2] < 0):
+            print("Fell off boundary")    
+            self.done = True
+        return self.done
+
+    def reachedGoal(self):
+        currentPosition, currentOri = [list(l) for l in p.getBasePositionAndOrientation(self.car)] 
+        DistToGoal = math.sqrt(((currentPosition[0] - self.args.final_x) ** 2 +
+                                  (currentPosition[1] - self.args.final_y) ** 2))
+        
+        
+        if DistToGoal < self.args.threshold_dist:
+            print("Reached Goal")
+            self.done = True
+        return self.done
+
+    def moveForward(self):
+        for joint in range(2, 6):
+            p.setJointMotorControl(self.car, joint, p.VELOCITY_CONTROL, self.targetVel, self.maxForce)
+        for step in range(300):
+            p.stepSimulation()
+
+    def change_direction(self, dir):
+        if dir == 0: #"left"
+            forward = 0
+            turn = 0.5
+        elif dir == 1: #"right"
+            forward = 0
+            turn = -0.5
+        elif dir == 2: #"front"
+            forward = 1
+            turn = 0
+        elif dir == 3: #"back"
+            forward = -1
+            turn = 0
+        
+        frontleftWheelVelocity = 0
+        frontrightWheelVelocity = 0
+        rearleftWheelVelocity = 0
+        rearrightWheelVelocity = 0
+        
+        frontleftWheelVelocity += (forward-turn)*self.targetVel
+        frontrightWheelVelocity+= (forward+turn)*self.targetVel
+        rearleftWheelVelocity += (forward-turn)*self.targetVel
+        rearrightWheelVelocity+= (forward+turn)*self.targetVel
+
+        p.setJointMotorControl(self.car, 2, p.VELOCITY_CONTROL, frontleftWheelVelocity, self.maxForce)
+        p.setJointMotorControl(self.car, 3, p.VELOCITY_CONTROL, frontrightWheelVelocity, self.maxForce)
+        p.setJointMotorControl(self.car, 4, p.VELOCITY_CONTROL, rearleftWheelVelocity, self.maxForce)
+        p.setJointMotorControl(self.car, 5, p.VELOCITY_CONTROL, rearrightWheelVelocity, self.maxForce)
+        for step in range(300):
+            p.stepSimulation()
+        self.moveForward()
+
+    def checkDone(self):
+        reward = 0
+        if self.collided():
+            self.done = True
+            reward = self.args.reward_collision
+        elif self.reachedGoal(): 
+            self.done = True
+            reward = self.args.reward_goal
+        else:
+            self.done = False
+        return reward
+
+    def step(self, action):
+        self.change_direction(action)
+        reward = self.checkDone()
+        if self.done:
+            state, rgbImage = self.ImageAtCurrentPosition()
+            # no next state since episode is done
+            next_state = torch.zeros(state.shape).to(self.device)
+        else:
+            next_state, rgbImage = self.ImageAtCurrentPosition()
+        return self.done, next_state, reward, rgbImage
+
+    def close(self):
+        time.sleep(10)
+        p.disconnect()
