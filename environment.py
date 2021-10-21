@@ -26,11 +26,26 @@ class CarEnvironment:
     def reset(self):
         p.resetSimulation()     
         p.setAdditionalSearchPath(pybullet_data.getDataPath())
-        p.loadURDF("simpleplane.urdf")
+        # p.loadURDF("simpleplane.urdf")
+        stadiumID = p.loadSDF("stadium_no_collision.sdf")
         p.setGravity(0, 0, -10)
         p.setRealTimeSimulation(0) 
         self.car = p.loadURDF("husky/husky.urdf", self.args.start_x, self.args.start_y, self.args.start_z)
-        visualShapeId3 = p.loadURDF("sphere2red.urdf", [self.args.final_x, self.args.final_y, self.args.final_z], useFixedBase=1)
+        # Destination 
+        visualShapeId4 = p.loadURDF("soccerball.urdf", [self.args.final_x, self.args.final_y, self.args.final_z], useFixedBase=1)
+        # Obstacles ID -  [5,6,7,8,9,10,11,12,13,14]
+        visualShapeId5 = p.loadURDF("sphere2red.urdf", [3, 8 , 0], useFixedBase=1)
+        visualShapeId6 = p.loadURDF("sphere2red.urdf", [-8, 5 , 0], useFixedBase=1)
+        visualShapeId7 = p.loadURDF("sphere2red.urdf", [-5, -2 , 0], useFixedBase=1)
+        visualShapeId8 = p.loadURDF("sphere2red.urdf", [-10, 0 , 0], useFixedBase=1)
+        visualShapeId9 = p.loadURDF("sphere2red.urdf", [2, -2, 0], useFixedBase=1)
+        visualShapeId10 = p.loadURDF("sphere2red.urdf", [4, 3, 0], useFixedBase=1)
+        visualShapeId11 = p.loadURDF("sphere2red.urdf", [3, 0, 0], useFixedBase=1)
+        visualShapeId11 = p.loadURDF("sphere2red.urdf", [0, -2, 0], useFixedBase=1)
+        visualShapeId12 = p.loadURDF("sphere2.urdf", [-15, -2, 0], useFixedBase=1)
+        visualShapeId13 = p.loadURDF("sphere2.urdf", [-8, -5, 0], useFixedBase=1)
+        visualShapeId14 = p.loadURDF("sphere2.urdf", [-10, -9, 0], useFixedBase=1)
+
         self.carPos, self.carOrn = p.getBasePositionAndOrientation(self.car)
         self.done = False
 
@@ -62,16 +77,31 @@ class CarEnvironment:
         view_matrix = p.computeViewMatrix(pos, pos + camera_vec, up_vec)
         width, height, rgbImg, depthImg, segImg = p.getCameraImage(self.screen_width, self.screen_height, view_matrix, proj_matrix)
 
+        areaOfObstacle = 0
+        for i in range(segImg.shape[0]):
+            for j in range(segImg.shape[1]):
+                pixel = segImg[i][j]
+                if (pixel >= 0):
+                    obUid = pixel & ((1 << 24) - 1)
+                    # checking if pixel belongs to obstacle ID
+                    if obUid in [5,6,7,8,9,10,11,12,13,14]:
+                        areaOfObstacle+=1
+
         rgbImg = rgbImg[:,:,:3] #convert rgba to rgb
         rgbImgTensor = torchvision.transforms.ToTensor()(rgbImg) #convert HWC to CHW
         rgbImgTensor = rgbImgTensor.unsqueeze(0).to(self.device) #add batch dimension
-        return rgbImgTensor, rgbImg
+        areaOfObstacle = torch.tensor([areaOfObstacle]).float()
+        areaOfObstacle = areaOfObstacle.unsqueeze(0).to(self.device)
+        return {'image': rgbImgTensor, 'area_obstacle': areaOfObstacle}, rgbImg
 
-    def collided(self):
+    def outsideBoundary(self):
+        stadium_halflen = 105 * 0.25  # FOOBALL_FIELD_HALFLEN
+        stadium_halfwidth = 50 * 0.25  # FOOBALL_FIELD_HALFWID
+
         # Done by running off boundaries
         self.carPos, self.carOrn = p.getBasePositionAndOrientation(self.car)
-        if (self.carPos[0] >= 10 or self.carPos[0] <= -10 or
-                self.carPos[1] >= 10 or self.carPos[1] <= -10 or self.carPos[2] < 0):
+        if (self.carPos[0] >= stadium_halflen or self.carPos[0] <= -stadium_halflen or
+                self.carPos[1] >= stadium_halfwidth or self.carPos[1] <= -stadium_halfwidth):
             print("Fell off boundary")    
             self.done = True
         return self.done
@@ -80,7 +110,6 @@ class CarEnvironment:
         currentPosition, currentOri = [list(l) for l in p.getBasePositionAndOrientation(self.car)] 
         DistToGoal = math.sqrt(((currentPosition[0] - self.args.final_x) ** 2 +
                                   (currentPosition[1] - self.args.final_y) ** 2))
-        
         
         if DistToGoal < self.args.threshold_dist:
             print("Reached Goal")
@@ -127,9 +156,9 @@ class CarEnvironment:
 
     def checkDone(self):
         reward = 0
-        if self.collided():
+        if self.outsideBoundary():
             self.done = True
-            reward = self.args.reward_collision
+            reward = self.args.reward_outside_boundary
         elif self.reachedGoal(): 
             self.done = True
             reward = self.args.reward_goal
@@ -143,9 +172,13 @@ class CarEnvironment:
         if self.done:
             state, rgbImage = self.ImageAtCurrentPosition()
             # no next state since episode is done
-            next_state = torch.zeros(state.shape).to(self.device)
+            next_state = {'image': torch.zeros(state['image'].shape).to(self.device), 'area_obstacle': torch.tensor([[0.0]]).float().to(self.device)}
         else:
             next_state, rgbImage = self.ImageAtCurrentPosition()
+
+        areaOfObstacle = next_state['area_obstacle']
+        if areaOfObstacle != 0:
+            reward += self.args.reward_collision*areaOfObstacle
         return self.done, next_state, reward, rgbImage
 
     def close(self):

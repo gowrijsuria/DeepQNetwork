@@ -65,14 +65,14 @@ class Trainer:
         if not os.path.exists(dir_name):
             os.makedirs(dir_name)
 
-    def select_action(self, state):
+    def select_action(self, state, areaOfObstacle):
         random_num = random.random()
         epsilon_thres = self.args.epsilon_stop + (self.args.epsilon_start - self.args.epsilon_stop)* \
                             np.exp(-1. * self.steps_done/self.args.epsilon_decay) 
         if random_num > epsilon_thres:
             # choose action via exploitation
             with torch.no_grad():
-                q_values = self.PolicyNet(state)
+                q_values = self.PolicyNet(state, areaOfObstacle)
                 _, action = torch.max(q_values, dim = 1)
                 action = int(action.item())
         else:
@@ -84,38 +84,26 @@ class Trainer:
         if len(self.memory) < self.args.batch_size:
             return
         sampled_batch = self.memory.sampleBatch(self.args.batch_size)
-        # print('sampled_batch length', len(sampled_batch))
-        states = torch.stack([each[0] for each in sampled_batch], dim=1).squeeze().to(self.device)
-        # print('states shape', states.shape)
+
+        states = {'image': torch.stack([each[0]['image'] for each in sampled_batch], dim=1).squeeze(0).to(self.device), 
+                'area_obstacle': torch.stack([each[0]['area_obstacle'] for each in sampled_batch], dim=1).squeeze(0).to(self.device)}
         actions = torch.tensor([each[1] for each in sampled_batch]).to(self.device).unsqueeze(-1)
-        # print('sampled batch')
-        # print(sampled_batch)
-        # print('next states')
-        # print([each[2] for each in sampled_batch])
-        next_states = torch.stack([each[2] for each in sampled_batch], dim=1).squeeze().to(self.device)
-        # print('next_states shape', next_states.shape)
+        next_states = {'image': torch.stack([each[2]['image'] for each in sampled_batch], dim=1).squeeze(0).to(self.device), 
+                'area_obstacle': torch.stack([each[2]['area_obstacle'] for each in sampled_batch], dim=1).squeeze(0).to(self.device)}
         rewards = torch.tensor([each[3] for each in sampled_batch]).to(self.device)
-        
-        state_action_values = self.PolicyNet(states)
+
+        state_action_values = self.PolicyNet(states['image'], states['area_obstacle'])
         state_action_values = state_action_values.gather(1, actions)
         next_state_values = torch.zeros(self.args.batch_size, device=self.device)
-        next_state_values = self.TargetNet(next_states).max(1)[0]
-        # print('next_state values shape', next_state_values.shape)
-        # print(torch.zeros(states[0].shape))
+        next_state_values = self.TargetNet(next_states['image'], next_states['area_obstacle']).max(1)[0]
         episode_ends = []
-        for i in range(next_states.shape[0]):
-            # print(next_states[i].shape)
-            # print(torch.zeros(states[0].shape).shape)
-            # print(torch.all(torch.eq(next_states[i], torch.zeros(states[0].shape).to(self.device))))
-            if torch.all(torch.eq(next_states[i], torch.zeros(states[0].shape).to(self.device))):
+        for i in range(next_states['image'].shape[0]):
+            if torch.all(torch.eq(next_states['image'][i], torch.zeros(states['image'][0].shape).to(self.device))):
                 episode_ends.append(i)
         episode_ends = torch.tensor(episode_ends)
-        # episode_ends = (next_states.cpu().numpy() == np.zeros(states[0].shape)).all(axis=1)
-        # print('episode_ends shape', episode_ends.shape)
+
         for i in episode_ends:
             next_state_values[i] = torch.tensor(0.0)
-        # next_state_values = next_state_values.detach()
-        # print('next_state_values[episode_ends] shape', next_state_values[episode_ends])
         expected_state_action_values = (next_state_values * self.args.gamma) + rewards
 
         criterion = nn.MSELoss()
@@ -137,15 +125,13 @@ class Trainer:
         rewardVsEpisode = []
         for episode in range(1, self.args.num_episodes+1):
             total_reward = 0
-            rewardVsEpisode.append(total_reward)
-            # self.env.reset()
             state, rgbImage = self.env.ImageAtCurrentPosition()
             recordingFrames = []
             recordingFrames.append(rgbImage)
             step = 0
             while True:
                 self.steps_done+=1 # for epsilon_decay
-                action = self.select_action(state)
+                action = self.select_action(state['image'], state['area_obstacle'])
                 done, next_state, reward, rgbImage = self.env.step(action)
                 total_reward += reward
                 self.memory.push((state, action, next_state, reward))
@@ -154,12 +140,11 @@ class Trainer:
                 loss = self.optimisePolicyNet()
                 losses.append(loss)
                 if done or step == self.args.max_steps:
-                    # print(loss)
-                    print('Episode: {}'.format(episode),'Total reward: {}'.format(total_reward))
+                    print('Episode: {}'.format(episode),'Total reward: {}'.format(total_reward[0][0].cpu().numpy()))
 
                     rewardVsEpisode.append(total_reward)
-                    # averageReward = np.mean(rewardVsEpisode[episode-min(episode,self.args.reward_average_window):episode+1])
-                    f.write('Episode: {}, Total reward: {} \n'.format(episode, total_reward))
+                    averageReward = torch.mean(torch.FloatTensor(rewardVsEpisode[episode-min(episode,self.args.reward_average_window):episode+1]))
+                    f.write('Episode: {}, Total reward: {} \n'.format(episode, total_reward[0][0].cpu().numpy()))
                     self.env.reset()
                     break
                 else:
@@ -167,7 +152,7 @@ class Trainer:
                 step+=1
             if episode % self.args.target_update == 0:
                 self.TargetNet.load_state_dict(self.PolicyNet.state_dict())
-            if total_reward >= self.args.averageRewardThreshold or episode == self.args.num_episodes:
+            if averageReward >= self.args.averageRewardThreshold or episode == self.args.num_episodes:
                 print("rewardVsEpisode")
                 print(rewardVsEpisode)
                 self.Images_to_Video(recordingFrames)
