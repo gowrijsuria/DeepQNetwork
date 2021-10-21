@@ -1,5 +1,5 @@
 # DeepQNetwork
-Implementation of Deep Q Network in Pybullet
+Implementation of Deep Q Network with Pybullet
 
 ## Objective
 Use DeepQNetworks to find the optimal path to the destination using an environment created using pybullet. The environment contains obstacles and a goal point(soccerball). The input states to the network are images and the total area of obstacles in the scene (found using segmentation masks).
