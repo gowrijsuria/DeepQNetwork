@@ -11,4 +11,8 @@
 module add cuda/10.2
 module add cudnn/7.6.5-cuda-10.2
 
-python3 main.py --save_path /ssd_scratch/cvit/gowri/DQN/ --experiment oct21_batch32_episodes150_steps20_coll_half_avgwind_5 --max_steps 20 --reward_average_window 5 --num_episodes 150 --averageRewardThreshold 4500
+python3 main.py --save_path /ssd_scratch/cvit/gowri/DQN/ --experiment oct25_batch32_episodes500_steps50_coll0_01_avgwind5_maxForce_40 --max_steps 50 --reward_average_window 5 --num_episodes 500 --averageRewardThreshold 4500 --threshold_dist 2 --batch_size 32 \
+        --targetVel 5 \
+        --maxForce 40 \
+        --reward_collision -0.01
+

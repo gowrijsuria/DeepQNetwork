@@ -34,17 +34,19 @@ class CarEnvironment:
         # Destination 
         visualShapeId4 = p.loadURDF("soccerball.urdf", [self.args.final_x, self.args.final_y, self.args.final_z], useFixedBase=1)
         # Obstacles ID -  [5,6,7,8,9,10,11,12,13,14]
-        visualShapeId5 = p.loadURDF("sphere2red.urdf", [3, 8 , 0], useFixedBase=1)
+        visualShapeId5 = p.loadURDF("sphere2red.urdf", [4, 8 , 0], useFixedBase=1)
         visualShapeId6 = p.loadURDF("sphere2red.urdf", [-8, 5 , 0], useFixedBase=1)
-        visualShapeId7 = p.loadURDF("sphere2red.urdf", [-5, -2 , 0], useFixedBase=1)
-        visualShapeId8 = p.loadURDF("sphere2red.urdf", [-10, 0 , 0], useFixedBase=1)
-        visualShapeId9 = p.loadURDF("sphere2red.urdf", [2, -2, 0], useFixedBase=1)
-        visualShapeId10 = p.loadURDF("sphere2red.urdf", [4, 3, 0], useFixedBase=1)
-        visualShapeId11 = p.loadURDF("sphere2red.urdf", [3, 0, 0], useFixedBase=1)
-        visualShapeId11 = p.loadURDF("sphere2red.urdf", [0, -2, 0], useFixedBase=1)
+        visualShapeId7 = p.loadURDF("sphere2red.urdf", [-10, -2 , 0], useFixedBase=1)
+        visualShapeId8 = p.loadURDF("sphere2red.urdf", [-12, 0 , 0], useFixedBase=1)
+        visualShapeId9 = p.loadURDF("sphere2red.urdf", [10, -9, 0], useFixedBase=1)
+        visualShapeId10 = p.loadURDF("sphere2red.urdf", [14, 3, 0], useFixedBase=1)
+        visualShapeId11 = p.loadURDF("sphere2red.urdf", [10, 0, 0], useFixedBase=1)
+        visualShapeId12 = p.loadURDF("sphere2red.urdf", [0, -12, 0], useFixedBase=1)
         visualShapeId12 = p.loadURDF("sphere2.urdf", [-15, -2, 0], useFixedBase=1)
         visualShapeId13 = p.loadURDF("sphere2.urdf", [-8, -5, 0], useFixedBase=1)
         visualShapeId14 = p.loadURDF("sphere2.urdf", [-10, -9, 0], useFixedBase=1)
+        visualShapeId15 = p.loadURDF("sphere2red.urdf", [3, 0, 0], useFixedBase=1)
+        visualShapeId16 = p.loadURDF("sphere2red.urdf", [0, -2, 0], useFixedBase=1)
 
         self.carPos, self.carOrn = p.getBasePositionAndOrientation(self.car)
         self.done = False
@@ -84,7 +86,7 @@ class CarEnvironment:
                 if (pixel >= 0):
                     obUid = pixel & ((1 << 24) - 1)
                     # checking if pixel belongs to obstacle ID
-                    if obUid in [5,6,7,8,9,10,11,12,13,14]:
+                    if obUid not in [0,1,2,3,4]:
                         areaOfObstacle+=1
 
         rgbImg = rgbImg[:,:,:3] #convert rgba to rgb
@@ -92,6 +94,7 @@ class CarEnvironment:
         rgbImgTensor = rgbImgTensor.unsqueeze(0).to(self.device) #add batch dimension
         areaOfObstacle = torch.tensor([areaOfObstacle]).float()
         areaOfObstacle = areaOfObstacle.unsqueeze(0).to(self.device)
+        
         return {'image': rgbImgTensor, 'area_obstacle': areaOfObstacle}, rgbImg
 
     def outsideBoundary(self):
@@ -110,6 +113,7 @@ class CarEnvironment:
         currentPosition, currentOri = [list(l) for l in p.getBasePositionAndOrientation(self.car)] 
         DistToGoal = math.sqrt(((currentPosition[0] - self.args.final_x) ** 2 +
                                   (currentPosition[1] - self.args.final_y) ** 2))
+        
         
         if DistToGoal < self.args.threshold_dist:
             print("Reached Goal")

@@ -50,13 +50,18 @@ class Trainer:
 
     def Images_to_Video(self, recordingFrames):
         vid_path = self.save_dir + 'video.mp4'
-        frame_rate = 30
+        frame_rate = 1
         h,w,c = recordingFrames[0].shape
         frame_size = (w,h)
         out = cv2.VideoWriter(vid_path,cv2.VideoWriter_fourcc(*'mp4v'), frame_rate, frame_size)
 
+        imgs_path = os.path.join(self.save_dir, 'imgs')
         for i in range(len(recordingFrames)):
             recordingFrame = cv2.cvtColor(recordingFrames[i], cv2.COLOR_RGB2BGR)
+            img_final = os.path.join(imgs_path,  str(i) + '.png')
+            print(img_final)
+            self.check_path(img_final)
+            cv2.imwrite(img_final, recordingFrame)
             out.write(recordingFrame)
         out.release() 
 
